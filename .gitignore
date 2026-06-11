@@ -45,3 +45,6 @@ temp/
 .dev.vars
 .wrangler/
 AGENTS.local.md
+
+# Kamal deployment secrets
+.kamal/secrets
