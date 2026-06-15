@@ -66,7 +66,7 @@ export class FizzyClient {
 
   constructor(config: FizzyClientConfig) {
     this.accessToken = config.accessToken;
-    this.baseUrl = config.baseUrl || "https://app.fizzy.do";
+    this.baseUrl = config.baseUrl || process.env.FIZZY_BASE_URL || "https://app.fizzy.do";
     this.timeout = config.timeout ?? 30000;
     this.maxRetries = config.maxRetries ?? 3;
     this.retryBaseDelay = config.retryBaseDelay ?? 1000;
