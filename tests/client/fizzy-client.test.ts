@@ -496,6 +496,61 @@ describe("FizzyClient", () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
+    it("should keep following cached pagination links after a 304 response", async () => {
+      const page1 = [{ id: "c1", title: "Card 1" }];
+      const page2 = [{ id: "c2", title: "Card 2" }];
+
+      const page1Headers = new Headers();
+      page1Headers.set("ETag", '"page1"');
+      page1Headers.set(
+        "Link",
+        '<https://app.fizzy.do/123/cards?page=2>; rel="next"'
+      );
+
+      const page2Headers = new Headers();
+      page2Headers.set("ETag", '"page2"');
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: page1Headers,
+          json: async () => page1,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: page2Headers,
+          json: async () => page2,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 304,
+          headers: new Headers(),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 304,
+          headers: new Headers(),
+        });
+
+      await expect(client.getCards("123")).resolves.toEqual([
+        ...page1,
+        ...page2,
+      ]);
+      await expect(client.getCards("123")).resolves.toEqual([
+        ...page1,
+        ...page2,
+      ]);
+
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        4,
+        "https://app.fizzy.do/123/cards?page=2",
+        expect.any(Object)
+      );
+    });
+
     // Expected URL: GET /:account_slug/cards/:card_id
     it("should get a single card", async () => {
       const mockCard = { id: "card1", title: "Card 1" };

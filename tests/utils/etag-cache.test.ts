@@ -26,6 +26,17 @@ describe("ETagCache", () => {
       expect(cache.getETag("/api/unknown")).toBeUndefined();
     });
 
+    it("should store and retrieve response metadata with cached data", () => {
+      cache.set("/api/resource", '"etag123"', { data: "test" }, {
+        link: '</api/page/2>; rel="next"',
+      });
+
+      expect(cache.get("/api/resource")).toEqual({ data: "test" });
+      expect(cache.getMetadata("/api/resource")).toEqual({
+        link: '</api/page/2>; rel="next"',
+      });
+    });
+
     it("should invalidate specific entries", () => {
       cache.set("/api/resource", '"etag1"', { data: "test" });
 
@@ -175,4 +186,3 @@ describe("ETagCache with FizzyClient Integration", () => {
     expect(cache.getStats().maxEntries).toBe(1000);
   });
 });
-
