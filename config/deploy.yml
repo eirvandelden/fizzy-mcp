@@ -34,7 +34,7 @@ env:
     MCP_TRANSPORT: http
     PORT: 3000
     MCP_BIND_ALL_INTERFACES: "true"
-    LOG_LEVEL: info
+    LOG_LEVEL: debug
     FIZZY_BASE_URL: "https://tasks.vandelden.family"
 
 aliases:
