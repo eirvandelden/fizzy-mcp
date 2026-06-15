@@ -54,6 +54,11 @@ export interface FizzyClientConfig {
   cacheMaxAge?: number;
 }
 
+interface FizzyResponse<T> {
+  data: T;
+  headers: Headers;
+}
+
 export class FizzyClient {
   private accessToken: string;
   private baseUrl: string;
@@ -165,7 +170,19 @@ export class FizzyClient {
     path: string,
     body?: unknown
   ): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    const response = await this.requestWithResponse<T>(method, path, body);
+    return response.data;
+  }
+
+  /**
+   * Make an HTTP request and return response metadata needed by paginated endpoints.
+   */
+  private async requestWithResponse<T>(
+    method: string,
+    path: string,
+    body?: unknown
+  ): Promise<FizzyResponse<T>> {
+    const url = this.buildRequestUrl(path);
     const requestId = this.generateRequestId();
     let lastError: Error | undefined;
 
@@ -212,6 +229,10 @@ export class FizzyClient {
     throw lastError;
   }
 
+  private buildRequestUrl(path: string): string {
+    return /^https?:\/\//i.test(path) ? path : `${this.baseUrl}${path}`;
+  }
+
   /**
    * Execute a single HTTP request with timeout and ETag caching
    */
@@ -220,7 +241,7 @@ export class FizzyClient {
     url: string,
     body?: unknown,
     requestId?: string
-  ): Promise<T> {
+  ): Promise<FizzyResponse<T>> {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.accessToken}`,
       Accept: "application/json",
@@ -270,7 +291,7 @@ export class FizzyClient {
         const cachedData = this.cache.get(url);
         if (cachedData !== undefined) {
           this.log.debug(`${logPrefix}Cache hit (304 Not Modified): ${url}`);
-          return cachedData as T;
+          return { data: cachedData as T, headers: response.headers };
         }
         // Cache miss despite 304 - shouldn't happen, but fetch fresh data
         this.log.warn(`${logPrefix}304 received but no cached data for: ${url}`);
@@ -294,7 +315,7 @@ export class FizzyClient {
         if (!isGetRequest && this.cache) {
           this.invalidateCacheForMutation(url);
         }
-        return undefined as T;
+        return { data: undefined as T, headers: response.headers };
       }
 
       // Parse JSON response
@@ -315,9 +336,9 @@ export class FizzyClient {
             if (this.cache) {
               this.invalidateCacheForMutation(url);
             }
-            return { id, url: location } as T;
+            return { data: { id, url: location } as T, headers: response.headers };
           }
-          return undefined as T;
+          return { data: undefined as T, headers: response.headers };
         }
         throw new FizzyParseError(
           "Failed to parse API response as JSON",
@@ -339,7 +360,7 @@ export class FizzyClient {
         this.invalidateCacheForMutation(url);
       }
 
-      return data;
+      return { data, headers: response.headers };
     } catch (error) {
       clearTimeout(timeoutId);
 
@@ -382,6 +403,20 @@ export class FizzyClient {
 
     const queryString = searchParams.toString();
     return queryString ? `?${queryString}` : "";
+  }
+
+  private getNextPageUrl(headers: Headers): string | null {
+    const linkHeader = headers.get("Link") ?? headers.get("link");
+    if (!linkHeader) return null;
+
+    for (const link of linkHeader.split(",")) {
+      const match = link.match(/<([^>]+)>/);
+      if (match && /;\s*rel="?next"?/i.test(link)) {
+        return match[1];
+      }
+    }
+
+    return null;
   }
 
   // ============ Identity ============
@@ -484,22 +519,16 @@ export class FizzyClient {
   ): Promise<FizzyCard[]> {
     const slug = this.normalizeSlug(accountSlug);
     const allCards: FizzyCard[] = [];
-    let page = 1;
-    let prevCount: number | null = null;
+    const queryString = filters ? this.buildQueryString(filters) : "";
+    let nextUrl: string | null = `/${slug}/cards${queryString}`;
 
-    while (true) {
-      const params: Record<string, unknown> = { ...filters, page };
-      const queryString = this.buildQueryString(params);
-      const pageCards = await this.request<FizzyCard[]>(
+    while (nextUrl) {
+      const response = await this.requestWithResponse<FizzyCard[]>(
         "GET",
-        `/${slug}/cards${queryString}`
+        nextUrl
       );
-
-      if (pageCards.length === 0) break;
-      allCards.push(...pageCards);
-      if (prevCount !== null && pageCards.length < prevCount) break;
-      prevCount = pageCards.length;
-      page++;
+      allCards.push(...response.data);
+      nextUrl = this.getNextPageUrl(response.headers);
     }
 
     return allCards;
