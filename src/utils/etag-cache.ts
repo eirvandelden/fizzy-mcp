@@ -14,6 +14,7 @@ import { logger } from "./logger.js";
 export interface CacheEntry<T> {
   etag: string;
   data: T;
+  metadata?: Record<string, string>;
   cachedAt: number;
   url: string;
 }
@@ -65,9 +66,28 @@ export class ETagCache<T = unknown> {
   }
 
   /**
+   * Get cached response metadata for a URL if available and not expired
+   */
+  getMetadata(url: string): Record<string, string> | undefined {
+    const entry = this.cache.get(url);
+    if (entry && !this.isExpired(entry)) {
+      return entry.metadata;
+    }
+    if (entry) {
+      this.cache.delete(url);
+    }
+    return undefined;
+  }
+
+  /**
    * Store response data with its ETag
    */
-  set(url: string, etag: string, data: T): void {
+  set(
+    url: string,
+    etag: string,
+    data: T,
+    metadata?: Record<string, string>
+  ): void {
     // Enforce max entries (LRU-style: remove oldest if at limit)
     if (this.cache.size >= this.maxEntries) {
       const oldestKey = this.cache.keys().next().value;
@@ -80,6 +100,7 @@ export class ETagCache<T = unknown> {
     this.cache.set(url, {
       etag,
       data,
+      metadata,
       cachedAt: Date.now(),
       url,
     });
@@ -169,4 +190,3 @@ export class ETagCache<T = unknown> {
     return cleaned;
   }
 }
-

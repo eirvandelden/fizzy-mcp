@@ -291,7 +291,13 @@ export class FizzyClient {
         const cachedData = this.cache.get(url);
         if (cachedData !== undefined) {
           this.log.debug(`${logPrefix}Cache hit (304 Not Modified): ${url}`);
-          return { data: cachedData as T, headers: response.headers };
+          return {
+            data: cachedData as T,
+            headers: this.mergeCachedResponseMetadata(
+              response.headers,
+              this.cache.getMetadata(url)
+            ),
+          };
         }
         // Cache miss despite 304 - shouldn't happen, but fetch fresh data
         this.log.warn(`${logPrefix}304 received but no cached data for: ${url}`);
@@ -350,7 +356,12 @@ export class FizzyClient {
       if (isGetRequest && this.cache && response.headers) {
         const etag = response.headers.get("ETag");
         if (etag) {
-          this.cache.set(url, etag, data);
+          this.cache.set(
+            url,
+            etag,
+            data,
+            this.getCacheableResponseMetadata(response.headers)
+          );
           this.log.debug(`${logPrefix}Cached response with ETag: ${etag}`);
         }
       }
@@ -403,6 +414,24 @@ export class FizzyClient {
 
     const queryString = searchParams.toString();
     return queryString ? `?${queryString}` : "";
+  }
+
+  private getCacheableResponseMetadata(
+    headers: Headers
+  ): Record<string, string> | undefined {
+    const link = headers.get("Link") ?? headers.get("link");
+    return link ? { link } : undefined;
+  }
+
+  private mergeCachedResponseMetadata(
+    headers: Headers,
+    metadata?: Record<string, string>
+  ): Headers {
+    const mergedHeaders = new Headers(headers);
+    if (metadata?.link && !mergedHeaders.get("Link")) {
+      mergedHeaders.set("Link", metadata.link);
+    }
+    return mergedHeaders;
   }
 
   private getNextPageUrl(headers: Headers): string | null {
