@@ -483,11 +483,26 @@ export class FizzyClient {
     filters?: CardFilterOptions
   ): Promise<FizzyCard[]> {
     const slug = this.normalizeSlug(accountSlug);
-    const queryString = filters ? this.buildQueryString(filters) : "";
-    return this.request<FizzyCard[]>(
-      "GET",
-      `/${slug}/cards${queryString}`
-    );
+    const allCards: FizzyCard[] = [];
+    let page = 1;
+    let prevCount: number | null = null;
+
+    while (true) {
+      const params: Record<string, unknown> = { ...filters, page };
+      const queryString = this.buildQueryString(params);
+      const pageCards = await this.request<FizzyCard[]>(
+        "GET",
+        `/${slug}/cards${queryString}`
+      );
+
+      if (pageCards.length === 0) break;
+      allCards.push(...pageCards);
+      if (prevCount !== null && pageCards.length < prevCount) break;
+      prevCount = pageCards.length;
+      page++;
+    }
+
+    return allCards;
   }
 
 

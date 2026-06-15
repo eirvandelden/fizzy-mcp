@@ -205,7 +205,9 @@ describe("Tool Execution Tests (via FizzyClient)", () => {
     it("getCards retrieves cards with filters", async () => {
       const mockCards = [{ id: "card1", title: "Card 1" }];
 
-      mockFetch.mockResolvedValueOnce(mockResponse(mockCards));
+      mockFetch
+        .mockResolvedValueOnce(mockResponse(mockCards))
+        .mockResolvedValueOnce(mockResponse([])); // page 2 — empty, stops loop
 
       const result = await client.getCards("123", {
         status: "published",
