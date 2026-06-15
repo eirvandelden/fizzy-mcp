@@ -460,6 +460,32 @@ describe("FizzyClient", () => {
       );
     });
 
+    it("should reject cross-origin pagination links before sending authorization", async () => {
+      const page1 = [{ id: "c1", title: "Card 1" }];
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: createMockHeaders(
+            undefined,
+            '<https://evil.example/123/cards?page=2>; rel="next"'
+          ),
+          json: async () => page1,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          headers: createMockHeaders(),
+          json: async () => [],
+        });
+
+      await expect(client.getCards("123")).rejects.toThrow(
+        "Refusing to follow cross-origin pagination URL"
+      );
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it("should stop when the next page does not include a rel=next link", async () => {
       const page1 = Array.from({ length: 20 }, (_, i) => ({ id: `c${i}`, title: `Card ${i}` }));
       const page2 = Array.from({ length: 5 },  (_, i) => ({ id: `c${i + 20}`, title: `Card ${i + 20}` }));

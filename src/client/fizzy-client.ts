@@ -230,7 +230,19 @@ export class FizzyClient {
   }
 
   private buildRequestUrl(path: string): string {
-    return /^https?:\/\//i.test(path) ? path : `${this.baseUrl}${path}`;
+    if (!/^https?:\/\//i.test(path)) {
+      return `${this.baseUrl}${path}`;
+    }
+
+    const requestUrl = new URL(path);
+    const baseUrl = new URL(this.baseUrl);
+    if (requestUrl.origin !== baseUrl.origin) {
+      throw new Error(
+        `Refusing to follow cross-origin pagination URL: ${requestUrl.origin}`
+      );
+    }
+
+    return requestUrl.toString();
   }
 
   /**
