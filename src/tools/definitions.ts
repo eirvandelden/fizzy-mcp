@@ -13,6 +13,7 @@
  */
 
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { z } from "zod";
 import * as schemas from "./schemas.js";
 
 /**
@@ -22,7 +23,7 @@ export interface ToolDefinition {
   name: string;
   title: string;
   description: string;
-  schema: typeof schemas[keyof typeof schemas];
+  schema: z.AnyZodObject;
   annotations: ToolAnnotations;
 }
 
