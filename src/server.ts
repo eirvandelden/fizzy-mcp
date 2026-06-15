@@ -8,6 +8,7 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { FizzyClient } from "./client/fizzy-client.js";
 import { ALL_TOOLS } from "./tools/definitions.js";
 import { executeToolHandler } from "./tools/handlers.js";
@@ -15,9 +16,7 @@ import { executeToolHandler } from "./tools/handlers.js";
 /**
  * Format handler result as MCP tool response
  */
-function formatMcpResponse(result: unknown): {
-  content: Array<{ type: string; text: string }>;
-} {
+function formatMcpResponse(result: unknown): CallToolResult {
   const text = typeof result === "string"
     ? result
     : JSON.stringify(result, null, 2);

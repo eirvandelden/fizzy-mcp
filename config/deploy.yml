@@ -1,0 +1,45 @@
+service: fizzy_mcp
+
+image: fizzy_mcp
+
+servers:
+  web:
+    - 192.168.1.101
+
+proxy:
+  ssl: false
+  hosts:
+    - fizzy-mcp.home.arpa
+  forward_headers: true
+  app_port: 3000
+  healthcheck:
+    path: /health
+    interval: 2
+    timeout: 2
+
+registry:
+  server: registry.vandelden.family
+  username: root
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+  remote: ssh://root@192.168.1.102
+  local: false
+  context: "."
+
+env:
+  clear:
+    MCP_TRANSPORT: http
+    PORT: 3000
+    MCP_BIND_ALL_INTERFACES: "true"
+    LOG_LEVEL: info
+    FIZZY_BASE_URL: "http://svc-apps.home.arpa:80"
+
+aliases:
+  shell: app exec --interactive --reuse "sh"
+  logs: app logs -f
+  apps: server exec docker exec kamal-proxy kamal-proxy list
+
+deploy_timeout: 20
