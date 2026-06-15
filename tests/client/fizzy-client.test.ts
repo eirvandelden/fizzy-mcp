@@ -402,15 +402,21 @@ describe("FizzyClient", () => {
    * DELETE /:account_slug/cards/:card_id          - Delete card
    */
   describe("Cards", () => {
-    // Expected URL: GET /:account_slug/cards?status=...&column_id=...
+    // Expected URL: GET /:account_slug/cards?status=...&column_id=...&page=1
     it("should get all cards with filters", async () => {
       const mockCards = [{ id: "card1", title: "Card 1" }];
 
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockCards,
-      });
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => mockCards,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [], // page 2 — empty, stops loop
+        });
 
       const result = await client.getCards("123", {
         status: "published",
@@ -425,7 +431,46 @@ describe("FizzyClient", () => {
         expect.stringContaining("status=published"),
         expect.any(Object)
       );
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("page=1"),
+        expect.any(Object)
+      );
       expect(result).toEqual(mockCards);
+    });
+
+    it("should paginate and return all cards across multiple pages", async () => {
+      const page1 = Array.from({ length: 20 }, (_, i) => ({ id: `c${i}`, title: `Card ${i}` }));
+      const page2 = Array.from({ length: 20 }, (_, i) => ({ id: `c${i + 20}`, title: `Card ${i + 20}` }));
+
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page1 })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page2 })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => [] });
+
+      const result = await client.getCards("123");
+      expect(result).toHaveLength(40);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it("should stop when a page returns fewer items than the previous page", async () => {
+      const page1 = Array.from({ length: 20 }, (_, i) => ({ id: `c${i}`, title: `Card ${i}` }));
+      const page2 = Array.from({ length: 5 },  (_, i) => ({ id: `c${i + 20}`, title: `Card ${i + 20}` }));
+
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page1 })
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => page2 });
+
+      const result = await client.getCards("123");
+      expect(result).toHaveLength(25);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("should return empty array when first page is empty", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => [] });
+
+      const result = await client.getCards("123");
+      expect(result).toEqual([]);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     // Expected URL: GET /:account_slug/cards/:card_id
