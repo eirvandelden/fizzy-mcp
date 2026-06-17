@@ -213,13 +213,13 @@ export interface FizzyIdentity {
 // Card filtering options
 export interface CardFilterOptions {
   [key: string]: string | string[] | undefined;
-  board_id?: string;
+  board_ids?: string[];
   indexed_by?: "all" | "closed" | "not_now" | "stalled" | "postponing_soon" | "golden";
   status?: "draft" | "published" | "archived";
-  column_id?: string;
+  column_ids?: string[];
   assignee_ids?: string[];
   tag_ids?: string[];
   due_before?: string;
   due_after?: string;
-  search?: string;
+  terms?: string[];
 }

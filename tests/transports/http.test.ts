@@ -297,6 +297,28 @@ describe("HTTP Transport", () => {
       expect(StreamableHTTPServerTransport).not.toHaveBeenCalled();
     });
 
+    it("should reuse the token session when a POST omits session ID", async () => {
+      const mockTransport = {
+        handleRequest: vi.fn().mockResolvedValue(undefined),
+      };
+      sessionManager.create("existing-session", {
+        transport: mockTransport as unknown as StreamableHTTPServerTransport,
+        client: new FizzyClient({ accessToken: TEST_FIZZY_TOKEN }),
+        fizzyToken: TEST_FIZZY_TOKEN
+      });
+
+      const req = createMockRequest("POST", "/mcp", {
+        authorization: `Bearer ${TEST_FIZZY_TOKEN}`
+      });
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(req.headers["mcp-session-id"]).toBe("existing-session");
+      expect(mockTransport.handleRequest).toHaveBeenCalledWith(req, res);
+      expect(StreamableHTTPServerTransport).not.toHaveBeenCalled();
+    });
+
     it("should create new session for unknown session ID", async () => {
       const req = createMockRequest("POST", "/mcp", {
         "mcp-session-id": "unknown-session",
@@ -590,4 +612,3 @@ describe("HTTP Transport", () => {
     });
   });
 });
-

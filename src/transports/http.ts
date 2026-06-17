@@ -55,6 +55,24 @@ export interface HTTPTransportServer {
   close: () => Promise<void>;
 }
 
+function findSessionByToken(
+  sessionManager: SessionManager<HTTPSession>,
+  fizzyToken: string
+): { sessionId: string; session: HTTPSession } | undefined {
+  for (const existingSessionId of sessionManager.keys()) {
+    const existingSession = sessionManager.peek(existingSessionId);
+    if (
+      existingSession?.fizzyToken === fizzyToken &&
+      typeof existingSession.transport?.handleRequest === "function"
+    ) {
+      sessionManager.touch(existingSessionId);
+      return { sessionId: existingSessionId, session: existingSession };
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Create request handler for Streamable HTTP transport
  * Exported for testing
@@ -68,7 +86,7 @@ export function createHTTPRequestHandler(
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
-    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    let sessionId = req.headers["mcp-session-id"] as string | undefined;
 
     // Health check endpoint (optionally skip security, but handle OPTIONS for CORS)
     if (url.pathname === "/health" && req.method !== "OPTIONS") {
@@ -119,7 +137,21 @@ export function createHTTPRequestHandler(
           return;
         }
 
-        const session = sessionId ? sessionManager.get(sessionId) : undefined;
+        let session = sessionId ? sessionManager.get(sessionId) : undefined;
+
+        if (!session) {
+          const tokenSession = findSessionByToken(sessionManager, fizzyToken);
+          if (tokenSession) {
+            if (sessionId && sessionId !== tokenSession.sessionId) {
+              log.debug(`Recovering HTTP session by token after unknown session ID: ${sessionId}`);
+            } else {
+              log.debug(`Recovering HTTP session by token: ${tokenSession.sessionId}`);
+            }
+            sessionId = tokenSession.sessionId;
+            session = tokenSession.session;
+            req.headers["mcp-session-id"] = tokenSession.sessionId;
+          }
+        }
 
         if (!session) {
           // Check if we can create a new session
