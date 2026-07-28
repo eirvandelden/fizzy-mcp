@@ -18,6 +18,7 @@
 
 import { createServer, IncomingMessage, ServerResponse, Server } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest, JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { FizzyClient } from "../client/fizzy-client.js";
 import { createFizzyServer } from "../server.js";
 import { logger } from "../utils/logger.js";
@@ -55,22 +56,49 @@ export interface HTTPTransportServer {
   close: () => Promise<void>;
 }
 
+/**
+ * Find the single existing session for a Fizzy token, for recovering a
+ * request that lost its mcp-session-id header. Returns undefined (no
+ * recovery) when zero or multiple sessions share the token - guessing among
+ * ambiguous candidates would merge two distinct clients into one session.
+ */
 function findSessionByToken(
   sessionManager: SessionManager<HTTPSession>,
   fizzyToken: string
 ): { sessionId: string; session: HTTPSession } | undefined {
+  const matches: { sessionId: string; session: HTTPSession }[] = [];
+
   for (const existingSessionId of sessionManager.keys()) {
     const existingSession = sessionManager.peek(existingSessionId);
     if (
       existingSession?.fizzyToken === fizzyToken &&
       typeof existingSession.transport?.handleRequest === "function"
     ) {
-      sessionManager.touch(existingSessionId);
-      return { sessionId: existingSessionId, session: existingSession };
+      matches.push({ sessionId: existingSessionId, session: existingSession });
     }
   }
 
-  return undefined;
+  if (matches.length !== 1) {
+    return undefined;
+  }
+
+  sessionManager.touch(matches[0].sessionId);
+  return matches[0];
+}
+
+/**
+ * Read and parse the JSON-RPC body of a POST request. The result must be
+ * forwarded as handleRequest's parsedBody param, since the request stream
+ * can only be consumed once.
+ */
+async function readJsonRpcBody(
+  req: IncomingMessage
+): Promise<JSONRPCMessage | JSONRPCMessage[]> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(chunk as Buffer);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf-8"));
 }
 
 /**
@@ -138,18 +166,45 @@ export function createHTTPRequestHandler(
         }
 
         let session = sessionId ? sessionManager.get(sessionId) : undefined;
+        let parsedBody: JSONRPCMessage | JSONRPCMessage[] | undefined;
 
         if (!session) {
-          const tokenSession = findSessionByToken(sessionManager, fizzyToken);
-          if (tokenSession) {
-            if (sessionId && sessionId !== tokenSession.sessionId) {
-              log.debug(`Recovering HTTP session by token after unknown session ID: ${sessionId}`);
-            } else {
-              log.debug(`Recovering HTTP session by token: ${tokenSession.sessionId}`);
+          // Peek the JSON-RPC body before attempting token-based recovery: a
+          // genuine initialize call from a new client also arrives without
+          // mcp-session-id, and must not be merged into another session that
+          // happens to share the same Fizzy token.
+          try {
+            parsedBody = await readJsonRpcBody(req);
+          } catch (error) {
+            log.warn("Failed to parse MCP request body", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            setSecureCorsHeaders(res, securityResult.corsOrigin || "*");
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32700, message: "Parse error" },
+              id: null,
+            }));
+            return;
+          }
+
+          const isInitialization = Array.isArray(parsedBody)
+            ? parsedBody.some(isInitializeRequest)
+            : isInitializeRequest(parsedBody);
+
+          if (!isInitialization) {
+            const tokenSession = findSessionByToken(sessionManager, fizzyToken);
+            if (tokenSession) {
+              if (sessionId && sessionId !== tokenSession.sessionId) {
+                log.debug(`Recovering HTTP session by token after unknown session ID: ${sessionId}`);
+              } else {
+                log.debug(`Recovering HTTP session by token: ${tokenSession.sessionId}`);
+              }
+              sessionId = tokenSession.sessionId;
+              session = tokenSession.session;
+              req.headers["mcp-session-id"] = tokenSession.sessionId;
             }
-            sessionId = tokenSession.sessionId;
-            session = tokenSession.session;
-            req.headers["mcp-session-id"] = tokenSession.sessionId;
           }
         }
 
@@ -205,7 +260,7 @@ export function createHTTPRequestHandler(
           await server.connect(transport);
 
           // Handle the initial request
-          await transport.handleRequest(req, res);
+          await transport.handleRequest(req, res, parsedBody);
           return;
         }
 
@@ -222,7 +277,7 @@ export function createHTTPRequestHandler(
         }
 
         // Handle subsequent requests for existing session
-        await session.transport.handleRequest(req, res);
+        await session.transport.handleRequest(req, res, parsedBody);
         return;
       }
 

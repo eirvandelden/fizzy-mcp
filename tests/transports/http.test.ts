@@ -65,16 +65,33 @@ describe("HTTP Transport", () => {
     sessionManager.dispose();
   });
 
+  const INITIALIZE_BODY = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-03-26",
+      capabilities: {},
+      clientInfo: { name: "test-client", version: "1.0.0" },
+    },
+  };
+
   // Helper to create mock request/response
   function createMockRequest(
     method: string,
     url: string,
-    headers: Record<string, string | string[]> = {}
+    headers: Record<string, string | string[]> = {},
+    body: unknown = INITIALIZE_BODY
   ) {
-    const req = new EventEmitter() as IncomingMessage;
+    const req = new EventEmitter() as IncomingMessage & {
+      [Symbol.asyncIterator]: () => AsyncIterator<Buffer>;
+    };
     req.method = method;
     req.url = url;
     req.headers = headers;
+    req[Symbol.asyncIterator] = async function* () {
+      yield Buffer.from(JSON.stringify(body));
+    };
     return req;
   }
 
@@ -292,7 +309,7 @@ describe("HTTP Transport", () => {
 
       await handler(req, res);
 
-      expect(mockTransport.handleRequest).toHaveBeenCalledWith(req, res);
+      expect(mockTransport.handleRequest).toHaveBeenCalledWith(req, res, undefined);
       // Should not create a new transport
       expect(StreamableHTTPServerTransport).not.toHaveBeenCalled();
     });
@@ -307,6 +324,37 @@ describe("HTTP Transport", () => {
         fizzyToken: TEST_FIZZY_TOKEN
       });
 
+      const req = createMockRequest(
+        "POST",
+        "/mcp",
+        { authorization: `Bearer ${TEST_FIZZY_TOKEN}` },
+        { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }
+      );
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(req.headers["mcp-session-id"]).toBe("existing-session");
+      expect(mockTransport.handleRequest).toHaveBeenCalledWith(
+        req,
+        res,
+        expect.objectContaining({ method: "tools/list" })
+      );
+      expect(StreamableHTTPServerTransport).not.toHaveBeenCalled();
+    });
+
+    it("should not merge two sessions sharing a token when the request is a fresh initialize", async () => {
+      const mockTransport = {
+        handleRequest: vi.fn().mockResolvedValue(undefined),
+      };
+      sessionManager.create("existing-session", {
+        transport: mockTransport as unknown as StreamableHTTPServerTransport,
+        client: new FizzyClient({ accessToken: TEST_FIZZY_TOKEN }),
+        fizzyToken: TEST_FIZZY_TOKEN
+      });
+
+      // A brand-new client's initialize call also omits mcp-session-id -
+      // it must get its own session, not be merged into "existing-session".
       const req = createMockRequest("POST", "/mcp", {
         authorization: `Bearer ${TEST_FIZZY_TOKEN}`
       });
@@ -314,9 +362,38 @@ describe("HTTP Transport", () => {
 
       await handler(req, res);
 
-      expect(req.headers["mcp-session-id"]).toBe("existing-session");
-      expect(mockTransport.handleRequest).toHaveBeenCalledWith(req, res);
-      expect(StreamableHTTPServerTransport).not.toHaveBeenCalled();
+      expect(mockTransport.handleRequest).not.toHaveBeenCalled();
+      expect(StreamableHTTPServerTransport).toHaveBeenCalled();
+    });
+
+    it("should not guess when multiple sessions share a token and the header is lost", async () => {
+      const mockTransportA = { handleRequest: vi.fn().mockResolvedValue(undefined) };
+      const mockTransportB = { handleRequest: vi.fn().mockResolvedValue(undefined) };
+      sessionManager.create("session-a", {
+        transport: mockTransportA as unknown as StreamableHTTPServerTransport,
+        client: new FizzyClient({ accessToken: TEST_FIZZY_TOKEN }),
+        fizzyToken: TEST_FIZZY_TOKEN
+      });
+      sessionManager.create("session-b", {
+        transport: mockTransportB as unknown as StreamableHTTPServerTransport,
+        client: new FizzyClient({ accessToken: TEST_FIZZY_TOKEN }),
+        fizzyToken: TEST_FIZZY_TOKEN
+      });
+
+      const req = createMockRequest(
+        "POST",
+        "/mcp",
+        { authorization: `Bearer ${TEST_FIZZY_TOKEN}` },
+        { jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }
+      );
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      // Ambiguous - must not guess which of the two sessions to reuse.
+      expect(mockTransportA.handleRequest).not.toHaveBeenCalled();
+      expect(mockTransportB.handleRequest).not.toHaveBeenCalled();
+      expect(StreamableHTTPServerTransport).toHaveBeenCalled();
     });
 
     it("should create new session for unknown session ID", async () => {
