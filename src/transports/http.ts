@@ -86,6 +86,11 @@ function findSessionByToken(
   return matches[0];
 }
 
+// Matches the SDK's own StreamableHTTPServerTransport MAXIMUM_MESSAGE_SIZE
+const MAX_JSON_RPC_BODY_BYTES = 4 * 1024 * 1024; // 4mb
+
+class PayloadTooLargeError extends Error {}
+
 /**
  * Read and parse the JSON-RPC body of a POST request. The result must be
  * forwarded as handleRequest's parsedBody param, since the request stream
@@ -95,7 +100,12 @@ async function readJsonRpcBody(
   req: IncomingMessage
 ): Promise<JSONRPCMessage | JSONRPCMessage[]> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
+    totalBytes += (chunk as Buffer).length;
+    if (totalBytes > MAX_JSON_RPC_BODY_BYTES) {
+      throw new PayloadTooLargeError(`Request body exceeds ${MAX_JSON_RPC_BODY_BYTES} bytes`);
+    }
     chunks.push(chunk as Buffer);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf-8"));
@@ -176,6 +186,18 @@ export function createHTTPRequestHandler(
           try {
             parsedBody = await readJsonRpcBody(req);
           } catch (error) {
+            if (error instanceof PayloadTooLargeError) {
+              log.warn("MCP request body too large", { error: error.message });
+              setSecureCorsHeaders(res, securityResult.corsOrigin || "*");
+              res.writeHead(413, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({
+                jsonrpc: "2.0",
+                error: { code: -32600, message: "Request body too large" },
+                id: null,
+              }));
+              return;
+            }
+
             log.warn("Failed to parse MCP request body", {
               error: error instanceof Error ? error.message : String(error),
             });
