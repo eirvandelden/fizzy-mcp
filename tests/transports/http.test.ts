@@ -396,6 +396,46 @@ describe("HTTP Transport", () => {
       expect(StreamableHTTPServerTransport).toHaveBeenCalled();
     });
 
+    it("should reject a request body larger than 4mb", async () => {
+      const req = createMockRequest(
+        "POST",
+        "/mcp",
+        { authorization: `Bearer ${TEST_FIZZY_TOKEN}` },
+        { jsonrpc: "2.0", id: 4, method: "tools/list", params: { data: "x".repeat(5 * 1024 * 1024) } }
+      );
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.writeHead).toHaveBeenCalledWith(413, { "Content-Type": "application/json" });
+      expect(JSON.parse(res._body)).toEqual({
+        jsonrpc: "2.0",
+        error: { code: -32600, message: "Request body too large" },
+        id: null,
+      });
+      expect(StreamableHTTPServerTransport).not.toHaveBeenCalled();
+    });
+
+    it("should reject a malformed JSON body with a parse error", async () => {
+      const req = createMockRequest("POST", "/mcp", {
+        authorization: `Bearer ${TEST_FIZZY_TOKEN}`
+      });
+      req[Symbol.asyncIterator] = async function* () {
+        yield Buffer.from("{ not valid json");
+      };
+      const res = createMockResponse();
+
+      await handler(req, res);
+
+      expect(res.writeHead).toHaveBeenCalledWith(400, { "Content-Type": "application/json" });
+      expect(JSON.parse(res._body)).toEqual({
+        jsonrpc: "2.0",
+        error: { code: -32700, message: "Parse error" },
+        id: null,
+      });
+      expect(StreamableHTTPServerTransport).not.toHaveBeenCalled();
+    });
+
     it("should create new session for unknown session ID", async () => {
       const req = createMockRequest("POST", "/mcp", {
         "mcp-session-id": "unknown-session",
